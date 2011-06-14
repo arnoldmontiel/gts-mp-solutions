@@ -950,22 +950,42 @@ public class Meitrack // Asset
     *** @return The loaded Device instance, or null if the Device was not found
     *** @throws DBException if a database error occurs
     **/
-    public static Meitrack loadDeviceByName(Account account, String devID)
+    public static Meitrack loadDeviceByName(Account account, String devID, int timestamp)
         throws DBException
     {
-        Meitrack mei = Meitrack.getMeitrack(account, devID);
+        Meitrack mei = Meitrack.getMeitrack(account, devID, timestamp);
         return mei;
     }
+    
+    public static Meitrack loadDeviceByName(Account account, String devID)
+    throws DBException
+	{
+        if ((account != null) && (devID != null)) {
+            String acctID = account.getAccountID();
+            return Meitrack.getCurrentEvent(acctID, devID); // just say it doesn't exist
+        }
+        return null;
+	}
+
 
     // ------------------------------------------------------------------------
+    public static Meitrack getMeitrack(Account account, String devID)
+    throws DBException
+	{
+	    if ((account != null) && (devID != null)) {
+            String acctID = account.getAccountID();
+	        return Meitrack.getCurrentEvent(acctID, devID); // just say it doesn't exist
+	    }
+	    return null;
+	}
 
     /* get device (may return null) */
-    public static Meitrack getMeitrack(Account account, String devID)
+    public static Meitrack getMeitrack(Account account, String devID, int timestamp)
         throws DBException
     {
         if ((account != null) && (devID != null)) {
             String acctID = account.getAccountID();
-            Meitrack.Key key = new Meitrack.Key(acctID, devID);
+            Meitrack.Key key = new Meitrack.Key(acctID, devID, timestamp);
             if (key.exists()) {
                 Meitrack mei = key.getDBRecord(true);
                 mei.setAccount(account);
@@ -980,7 +1000,7 @@ public class Meitrack // Asset
     }
     /* get/create device */
     // Note: does NOT return null (throws exception if not found)
-    public static Meitrack getDevice(Account account, String devID, boolean create)
+    public static Meitrack getDevice(Account account, String devID,int timestamp, boolean create)
         throws DBException
     {
 
@@ -997,7 +1017,7 @@ public class Meitrack // Asset
 
         /* get/create */
         Meitrack mei = null;
-        Meitrack.Key meiKey = new Meitrack.Key(acctID, devID);
+        Meitrack.Key meiKey = new Meitrack.Key(acctID, devID, timestamp);
         if (!meiKey.exists()) {
             if (create) {
             	mei = meiKey.getDBRecord();
@@ -1012,7 +1032,7 @@ public class Meitrack // Asset
             // we've been asked to create the device, and it already exists
             throw new DBAlreadyExistsException("Device-ID already exists '" + meiKey + "'");
         } else {
-        	mei = Meitrack.getMeitrack(account, devID);
+        	mei = Meitrack.getMeitrack(account, devID, timestamp);
             if (mei == null) {
                 throw new DBException("Unable to read existing Device-ID: " + meiKey);
             }
@@ -1023,11 +1043,11 @@ public class Meitrack // Asset
 
     // ------------------------------------------------------------------------
 
-    public static Meitrack createNewDevice(Account account, String devID, String uniqueID)
+    public static Meitrack createNewDevice(Account account, String devID, int timestamp,String uniqueID)
         throws DBException
     {
         if ((account != null) && !StringTools.isBlank(devID)) {
-            Meitrack dev = Meitrack.getDevice(account, devID, true); // does not return null
+            Meitrack dev = Meitrack.getDevice(account, devID, timestamp,true); // does not return null
             dev.save();
             return dev;
         } else {
@@ -1036,21 +1056,94 @@ public class Meitrack // Asset
     }
     
     /* create a virtual device record (used for testing purposes) */
-    public static Meitrack createVirtualDevice(String acctID, String devID)
+    public static Meitrack createVirtualDevice(String acctID, String devID, int timestamp)
     {
 
         /* get/create */
-        Meitrack.Key devKey = new Meitrack.Key(acctID, devID);
+        Meitrack.Key devKey = new Meitrack.Key(acctID, devID, timestamp);
         Meitrack dev = devKey.getDBRecord();
         dev.setCreationDefaultValues();
         dev.setVirtual(true);
         return dev;
 
     }
+    /* get current meitrak event */
+    public static Meitrack getCurrentEvent(String acctID, String devID) throws DBException
+    {
+
+        DBFactory<Meitrack> dbFact = Meitrack.getFactory();
+
+        /* has FLD_autoIndex? */
+        if (!dbFact.hasField(EventData.FLD_autoIndex)) {
+            return null;
+        }
+        
+        /* create key */
+        //DBFactory dbFact = EventData.getFactory();
+        //DBRecordKey<EventData> evKey = dbFact.createKey();
+        //evKey.setFieldValue(EventData.FLD_autoIndex, autoIndex);
+
+        /* create selector */
+        int limit = 1;
+        DBSelect<Meitrack> dsel = Meitrack._createCurrentEventSelector(
+                acctID, devID, limit);
+
+        /* get events */
+        Meitrack ed[] = null;
+        try {
+            DBProvider.lockTables(new String[] { TABLE_NAME() }, null);
+            ed = DBRecord.select(dsel, null); // select:DBSelect
+        } finally {
+            DBProvider.unlockTables();
+        }
+
+        /* return result */
+        return !ListTools.isEmpty(ed)? ed[0] : null;
+
+    }
 
     // ------------------------------------------------------------------------
 
-    /* return list of all Devices owned by the specified Account (NOT SCALABLE) */
+    private static DBSelect<Meitrack> _createCurrentEventSelector(
+			String acctID, String devID, int limit) {
+        /* invalid account/device */
+        if (StringTools.isBlank(acctID)) {
+            //Print.logWarn("No AccountID specified ...");
+            return null;
+        } else
+        if (StringTools.isBlank(devID)) {
+            //Print.logWarn("No DeviceID specified ...");
+            return null;
+        }
+
+        /* create/return DBSelect */
+        // DBSelect: [SELECT * FROM Meitrack] <Where> <FLD_timestamp> [DESC] LIMIT <Limit>
+        DBSelect<Meitrack> dsel = new DBSelect<Meitrack>(Meitrack.getFactory());
+        dsel.setWhere(Meitrack.getWhereClause(
+            acctID, devID));
+        dsel.setOrderByFields(FLD_timestamp);
+        dsel.setOrderAscending(true);
+        dsel.setLimit(limit);
+        return dsel;
+	}
+
+	private static String getWhereClause(String acctID, String devID) {
+        DBWhere dwh = new DBWhere(Meitrack.getFactory());
+
+        /* Account/Device */
+        // ( (accountID='acct') AND (deviceID='dev') )
+        if (!StringTools.isBlank(acctID)) {
+            dwh.append(dwh.EQ(EventData.FLD_accountID, acctID));
+            if (!StringTools.isBlank(devID) && !devID.equals("*")) {
+                dwh.append(dwh.AND_(dwh.EQ(EventData.FLD_deviceID , devID)));
+            }
+        }
+        
+        /* end of where */
+        return dwh.WHERE(dwh.toString());
+	}
+
+	/* return list of all Devices owned by the specified Account (NOT SCALABLE) */
     // does not return null
     public static OrderedSet<String> getDeviceIDsForAccount(String acctId, User userAuth, boolean inclInactv)
         throws DBException
@@ -1133,6 +1226,7 @@ public class Meitrack // Asset
     private static final String ARG_ACCOUNT[]       = new String[] { "account"   , "acct"  , "a" };
     private static final String ARG_DEVICE[]        = new String[] { "device"    , "dev"   , "d" };
     private static final String ARG_UNIQID[]        = new String[] { "uniqueid"  , "unique", "uniq", "uid", "u" };
+    private static final String ARG_TIMESTAMP[]       = new String[] { "timestamp"   , "time"  , "t" };
     private static final String ARG_CREATE[]        = new String[] { "create"               };
     private static final String ARG_EDIT[]          = new String[] { "edit"      , "ed"     };
     private static final String ARG_EDITALL[]       = new String[] { "editall"   , "eda"    }; 
@@ -1175,6 +1269,7 @@ public class Meitrack // Asset
         String acctID  = RTConfig.getString(ARG_ACCOUNT, "");
         String devID   = RTConfig.getString(ARG_DEVICE , "");
         String uniqID  = RTConfig.getString(ARG_UNIQID , "");
+        int timestamp  = RTConfig.getInt(ARG_TIMESTAMP , 0);
 
         /* account-id specified? */
         if (StringTools.isBlank(acctID)) {
@@ -1205,7 +1300,7 @@ public class Meitrack // Asset
         /* device exists? */
         boolean deviceExists = false;
         try {
-            deviceExists = Meitrack.exists(acctID, devID);
+            deviceExists = Meitrack.exists(acctID, devID, timestamp);
         } catch (DBException dbe) {
             Print.logError("Error determining if Device exists: " + _fmtDevID(acctID,devID));
             System.exit(99);
@@ -1215,7 +1310,7 @@ public class Meitrack // Asset
         Meitrack deviceRcd = null;
         if (deviceExists) {
             try {
-                deviceRcd = Meitrack.getDevice(acct, devID, false); // may throw DBException
+                deviceRcd = Meitrack.getDevice(acct, devID, timestamp,false); // may throw DBException
             } catch (DBException dbe) {
                 Print.logError("Error getting Device: " + _fmtDevID(acctID,devID));
                 dbe.printException();
@@ -1234,7 +1329,7 @@ public class Meitrack // Asset
                 Print.logWarn("Continuing with delete process ...");
             }
             try {
-                Meitrack.Key devKey = new Meitrack.Key(acctID, devID);
+                Meitrack.Key devKey = new Meitrack.Key(acctID, devID, timestamp);
                 devKey.delete(true); // also delete dependencies
                 Print.logInfo("Device deleted: " + _fmtDevID(acctID,devID));
                 deviceExists = false;
@@ -1253,7 +1348,7 @@ public class Meitrack // Asset
                 Print.logWarn("Device already exists: " + _fmtDevID(acctID,devID));
             } else {
                 try {
-                    Meitrack.createNewDevice(acct, devID, uniqID);
+                    Meitrack.createNewDevice(acct, devID, timestamp, uniqID);
                     Print.logInfo("Created Device: " + _fmtDevID(acctID,devID));
                     deviceExists = true;
                 } catch (DBException dbe) {
