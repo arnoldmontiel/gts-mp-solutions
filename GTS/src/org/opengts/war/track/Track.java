@@ -600,7 +600,7 @@ public class Track
             CommonServlet.setResponseContentType(response, HTMLTools.MIME_PLAIN());
             PrintWriter out = response.getWriter();
             out.println(org.opengts.Version.getInfo());
-            out.close();RequestProperties reqSt
+            out.close();
             return;
         }
 
